@@ -4,6 +4,29 @@ SkillBridge is an AI-powered platform designed to bridge the gap between student
 
 The platform helps students identify missing skills, discover suitable job opportunities, prepare for interviews, and improve their employability. Recruiters can publish job openings and manage applications.
 
+## Live Demo
+
+- **Frontend:** https://skill-bridge-4lfeewej6-skill-bridge-2aca.vercel.app/
+- **Backend API:** https://skillbridge-backend-tdm4.onrender.com
+- **API Documentation:** https://skillbridge-backend-tdm4.onrender.com/docs
+
+## Screenshots
+
+### Home Page
+![SkillBridge Home Page](screenshots/home-page.jpg)
+
+### Student Dashboard
+![Student Dashboard](screenshots/student-dashboard.jpg)
+
+### Recruiter Dashboard
+![Recruiter Dashboard](screenshots/recruiter-dashboard.jpg)
+
+### Skill Matching
+![Skill Matching](screenshots/skill-matching.jpg)
+
+### AI Mentor
+![AI Mentor](screenshots/ai-mentor.jpg)
+
 ## Key Features
 
 ### Student / Job Seeker
@@ -23,6 +46,7 @@ The platform helps students identify missing skills, discover suitable job oppor
 - Create and publish job openings.
 - Update and delete job postings.
 - View applicants and manage applications.
+- View and download applicant resumes.
 
 ### AI Capabilities
 - Gemini-powered AI Mentor.
@@ -40,7 +64,7 @@ The platform helps students identify missing skills, discover suitable job oppor
 | Backend | Python, FastAPI |
 | Database | SQLite (local), PostgreSQL (deployment) |
 | ORM | SQLAlchemy |
-| AI | Google Gemini API, Ollama fallback |
+| AI | Google Gemini API |
 | Authentication | JWT |
 | Resume processing | PyPDF, python-docx |
 | PDF generation | ReportLab |
@@ -56,9 +80,7 @@ SkillBridge/
 │   │   ├── models.py
 │   │   ├── schemas.py
 │   │   ├── security.py
-│   │   ├── mentor_ai.py
 │   │   ├── interview_ai.py
-│   │   ├── resume_parser.py
 │   │   ├── skill_matcher.py
 │   │   └── pdf_generator.py
 │   ├── requirements-deploy.txt
@@ -70,8 +92,12 @@ SkillBridge/
 │   ├── package.json
 │   └── vite.config.js
 │
-├── database/
-│   └── schema.sql
+├── screenshots/
+│   ├── home-page.jpg
+│   ├── student-dashboard.jpg
+│   ├── recruiter-dashboard.jpg
+│   ├── skill-matching.jpg
+│   └── ai-mentor.jpg
 │
 ├── .gitignore
 └── README.md
@@ -173,13 +199,9 @@ Configure the following variables in your backend environment:
 
 ## Deployment Architecture
 
-The planned production deployment architecture is:
-
-- **GitHub:** Public source code repository.
+- **GitHub:** Source code repository.
 - **Render:** FastAPI backend and PostgreSQL database.
 - **Vercel:** React frontend.
-
-Deployment URLs will be added after successful deployment and verification.
 
 ## Project Objective
 
