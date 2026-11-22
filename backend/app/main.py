@@ -55,6 +55,7 @@ app = FastAPI(
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://skill-bridge-4lfeewej6-skill-bridge-2aca.vercel.app",
 ]
 
 app.add_middleware(
@@ -226,10 +227,11 @@ def match_result(
 # GENERAL
 # --------------------------------------------------
 
+
 @app.get("/")
 def root():
     return {
-        "message": "SkillBridgePro API is running"
+        "message": "SkillBridge API is running"
     }
 
 
