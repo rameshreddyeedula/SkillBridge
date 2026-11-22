@@ -47,7 +47,7 @@ from .mentor_ai import prepare_study_guide, chat_with_mentor
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="SkillBridgePro API",
+    title="SkillBridge API",
     description="AI-powered student and job matching platform",
     version="1.0.0",
 )
