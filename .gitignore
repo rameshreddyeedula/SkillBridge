@@ -1,0 +1,50 @@
+﻿# Environment variables and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Local uploaded files
+backend/uploads/
+backend/media/
+uploads/
+
+# Unnecessary local files
+*.db
+README.txt
+
+# Unverified document
+trfg.pdf
+
+# Temporary backup files
+backend/verified_answers_backup.txt
+
+backend/cleanup_jobs.py
