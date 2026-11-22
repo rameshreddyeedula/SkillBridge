@@ -149,13 +149,10 @@ async def ask_gemini(
     num_predict: int = 1200,
     system_prompt=None,
 ) -> str:
-
-    """Call Gemini using its REST generateContent endpoint."""
+    """Call Gemini and retry temporary capacity/rate-limit failures."""
 
     if not GEMINI_API_KEY:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not configured."
-        )
+        raise RuntimeError("GEMINI_API_KEY is not configured.")
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -163,92 +160,95 @@ async def ask_gemini(
     )
 
     request_data = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": prompt}
-                ],
-            }
-        ],
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": max(
-                256,
-                min(int(num_predict), 8192),
-            ),
+            "maxOutputTokens": max(256, min(int(num_predict), 8192)),
         },
     }
 
     if system_prompt:
         request_data["systemInstruction"] = {
-            "parts": [
-                {"text": str(system_prompt)}
-            ]
+            "parts": [{"text": str(system_prompt)}]
         }
 
     if json_mode:
-        request_data["generationConfig"][
-            "responseMimeType"
-        ] = "application/json"
+        request_data["generationConfig"]["responseMimeType"] = "application/json"
 
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                url,
-                headers={
-                    "x-goog-api-key": GEMINI_API_KEY
-                },
-                json=request_data,
-            )
+    retryable_statuses = {429, 500, 502, 503, 504}
+    last_error = None
 
-            response.raise_for_status()
-            data = response.json()
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        for attempt in range(3):
+            try:
+                response = await client.post(
+                    url,
+                    headers={"x-goog-api-key": GEMINI_API_KEY},
+                    json=request_data,
+                )
 
-        candidates = data.get("candidates") or []
+                if response.status_code in retryable_statuses:
+                    last_error = (
+                        f"Gemini temporarily unavailable "
+                        f"(HTTP {response.status_code})."
+                    )
+                    if attempt < 2:
+                        retry_after = response.headers.get("Retry-After")
+                        try:
+                            delay = min(float(retry_after), 12.0) if retry_after else 2 ** (attempt + 1)
+                        except (TypeError, ValueError):
+                            delay = 2 ** (attempt + 1)
+                        await asyncio.sleep(delay)
+                        continue
 
-        if not candidates:
-            raise RuntimeError(
-                "Gemini returned no response candidate: "
-                + str(
-                    data.get("promptFeedback") or data
-                )[:500]
-            )
+                    raise RuntimeError(
+                        f"{last_error} Please try again in a minute. "
+                        f"Provider response: {response.text[:500]}"
+                    )
 
-        parts = (
-            candidates[0].get("content") or {}
-        ).get("parts") or []
+                response.raise_for_status()
+                data = response.json()
+                candidates = data.get("candidates") or []
 
-        answer = "\n".join(
-            part.get("text", "")
-            for part in parts
-            if isinstance(part, dict)
-            and part.get("text")
-        ).strip()
+                if not candidates:
+                    raise RuntimeError(
+                        "Gemini returned no response candidate: "
+                        + str(data.get("promptFeedback") or data)[:500]
+                    )
 
-        if not answer:
-            raise RuntimeError(
-                "Gemini returned an empty answer."
-            )
+                parts = (candidates[0].get("content") or {}).get("parts") or []
+                answer = "\\n".join(
+                    part.get("text", "")
+                    for part in parts
+                    if isinstance(part, dict) and part.get("text")
+                ).strip()
 
-        return answer
+                if not answer:
+                    raise RuntimeError("Gemini returned an empty answer.")
 
-    except httpx.HTTPStatusError as exc:
-        raise RuntimeError(
-            f"Gemini API error {exc.response.status_code}: "
-            f"{exc.response.text[:1000]}"
-        ) from exc
+                return answer
 
-    except httpx.TimeoutException as exc:
-        raise RuntimeError(
-            "Gemini request timed out. Please try again."
-        ) from exc
+            except httpx.TimeoutException as exc:
+                last_error = "Gemini request timed out."
+                if attempt < 2:
+                    await asyncio.sleep(2 ** (attempt + 1))
+                    continue
+                raise RuntimeError(
+                    f"{last_error} Please try again."
+                ) from exc
 
-    except httpx.RequestError as exc:
-        raise RuntimeError(
-            f"Could not connect to Gemini: {exc}"
-        ) from exc
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(
+                    f"Gemini API error {exc.response.status_code}: "
+                    f"{exc.response.text[:1000]}"
+                ) from exc
 
+            except httpx.RequestError as exc:
+                raise RuntimeError(
+                    f"Could not connect to Gemini: {exc}"
+                ) from exc
+
+    raise RuntimeError(last_error or "Gemini request failed. Please try again.")
 
 
 # ==================================================
@@ -396,7 +396,6 @@ def clean_chat_answer(answer: str) -> str:
         return "I couldn't generate an answer. Please try again."
 
     return answer
-
 
 # ==================================================
 # CODE BLOCK EXTRACTION
@@ -797,8 +796,7 @@ Your task:
                 "You are a careful mathematics and programming tutor. "
                 "Verify every calculation before responding. "
                 "Never repeat an incorrect arithmetic result."
-            ),
-        )
+            ),        )
 
         repaired = clean_chat_answer(repaired)
 
@@ -1197,8 +1195,7 @@ Requirements:
 - Include all imports.
 - Include complete executable Python code.
 - Include input handling when appropriate.
-- Include sample input and output.
-- Do not omit any code.
+- Include sample input and output.- Do not omit any code.
 - Do not use undefined functions.
 - Return the complete corrected answer.
 """
