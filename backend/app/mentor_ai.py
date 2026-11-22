@@ -149,16 +149,13 @@ async def ask_gemini(
     num_predict: int = 1200,
     system_prompt=None,
 ) -> str:
-    """Call Gemini and retry temporary capacity/rate-limit failures."""
+    """Use the configured Gemini model, then discover a supported Flash fallback."""
 
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not configured.")
 
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent"
-    )
-
+    base_url = "https://generativelanguage.googleapis.com/v1beta"
+    headers = {"x-goog-api-key": GEMINI_API_KEY}
     request_data = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -166,89 +163,109 @@ async def ask_gemini(
             "maxOutputTokens": max(256, min(int(num_predict), 8192)),
         },
     }
-
     if system_prompt:
         request_data["systemInstruction"] = {
             "parts": [{"text": str(system_prompt)}]
         }
-
     if json_mode:
         request_data["generationConfig"]["responseMimeType"] = "application/json"
 
-    retryable_statuses = {429, 500, 502, 503, 504}
-    last_error = None
+    retryable = {429, 500, 502, 503, 504}
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        for attempt in range(3):
+    async with httpx.AsyncClient(timeout=75.0) as client:
+        # Try the configured model first.
+        models_to_try = [GEMINI_MODEL]
+
+        async def discover_fallback_models():
             try:
-                response = await client.post(
-                    url,
-                    headers={"x-goog-api-key": GEMINI_API_KEY},
-                    json=request_data,
-                )
+                listing = await client.get(f"{base_url}/models", headers=headers)
+                listing.raise_for_status()
+                available = listing.json().get("models", [])
+                candidates = []
+                for item in available:
+                    name = str(item.get("name", ""))
+                    methods = item.get("supportedGenerationMethods", [])
+                    short_name = name.removeprefix("models/")
+                    if (
+                        short_name
+                        and short_name != GEMINI_MODEL
+                        and "generateContent" in methods
+                        and "flash" in short_name.lower()
+                    ):
+                        candidates.append(short_name)
+                # Prefer Flash-Lite for a lightweight backup, then other Flash models.
+                candidates.sort(key=lambda n: (0 if "lite" in n.lower() else 1, n))
+                return candidates[:3]
+            except Exception as exc:
+                print("Gemini fallback model discovery failed:", exc)
+                return []
 
-                if response.status_code in retryable_statuses:
-                    last_error = (
-                        f"Gemini temporarily unavailable "
-                        f"(HTTP {response.status_code})."
+        fallback_models = await discover_fallback_models()
+        models_to_try.extend(fallback_models)
+
+        last_error = None
+        for model_index, model_name in enumerate(models_to_try):
+            url = f"{base_url}/models/{model_name}:generateContent"
+            for attempt in range(2):
+                try:
+                    response = await client.post(
+                        url, headers=headers, json=request_data
                     )
-                    if attempt < 2:
-                        retry_after = response.headers.get("Retry-After")
-                        try:
-                            delay = min(float(retry_after), 12.0) if retry_after else 2 ** (attempt + 1)
-                        except (TypeError, ValueError):
-                            delay = 2 ** (attempt + 1)
-                        await asyncio.sleep(delay)
+                    if response.status_code in retryable:
+                        last_error = (
+                            f"{model_name} returned HTTP {response.status_code}"
+                        )
+                        if attempt == 0:
+                            await asyncio.sleep(1.5)
+                            continue
+                        print("Gemini model unavailable:", last_error)
+                        break
+
+                    response.raise_for_status()
+                    data = response.json()
+                    candidates = data.get("candidates") or []
+                    if not candidates:
+                        last_error = (
+                            "Gemini returned no response candidate: "
+                            + str(data.get("promptFeedback") or data)[:400]
+                        )
+                        break
+
+                    parts = (candidates[0].get("content") or {}).get("parts") or []
+                    answer = "\\n".join(
+                        part.get("text", "")
+                        for part in parts
+                        if isinstance(part, dict) and part.get("text")
+                    ).strip()
+                    if answer:
+                        if model_index:
+                            print("Gemini fallback model succeeded:", model_name)
+                        return answer
+                    last_error = f"{model_name} returned an empty answer."
+                    break
+
+                except httpx.HTTPStatusError as exc:
+                    detail = exc.response.text[:500]
+                    last_error = f"{model_name} API error {exc.response.status_code}: {detail}"
+                    # Do not try fallback models for invalid keys or malformed requests.
+                    if exc.response.status_code in {400, 401, 403}:
+                        raise RuntimeError(last_error) from exc
+                    break
+                except httpx.TimeoutException:
+                    last_error = f"{model_name} request timed out."
+                    if attempt == 0:
+                        await asyncio.sleep(1.5)
                         continue
+                    break
+                except httpx.RequestError as exc:
+                    last_error = f"Could not connect to Gemini: {exc}"
+                    break
 
-                    raise RuntimeError(
-                        f"{last_error} Please try again in a minute. "
-                        f"Provider response: {response.text[:500]}"
-                    )
-
-                response.raise_for_status()
-                data = response.json()
-                candidates = data.get("candidates") or []
-
-                if not candidates:
-                    raise RuntimeError(
-                        "Gemini returned no response candidate: "
-                        + str(data.get("promptFeedback") or data)[:500]
-                    )
-
-                parts = (candidates[0].get("content") or {}).get("parts") or []
-                answer = "\\n".join(
-                    part.get("text", "")
-                    for part in parts
-                    if isinstance(part, dict) and part.get("text")
-                ).strip()
-
-                if not answer:
-                    raise RuntimeError("Gemini returned an empty answer.")
-
-                return answer
-
-            except httpx.TimeoutException as exc:
-                last_error = "Gemini request timed out."
-                if attempt < 2:
-                    await asyncio.sleep(2 ** (attempt + 1))
-                    continue
-                raise RuntimeError(
-                    f"{last_error} Please try again."
-                ) from exc
-
-            except httpx.HTTPStatusError as exc:
-                raise RuntimeError(
-                    f"Gemini API error {exc.response.status_code}: "
-                    f"{exc.response.text[:1000]}"
-                ) from exc
-
-            except httpx.RequestError as exc:
-                raise RuntimeError(
-                    f"Could not connect to Gemini: {exc}"
-                ) from exc
-
-    raise RuntimeError(last_error or "Gemini request failed. Please try again.")
+        raise RuntimeError(
+            "Gemini could not answer using the configured model or discovered "
+            f"Flash fallbacks. Last error: {last_error or 'unknown error'}. "
+            "Please retry shortly."
+        )
 
 
 # ==================================================
