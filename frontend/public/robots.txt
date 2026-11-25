@@ -1,0 +1,5 @@
+
+User-agent: *
+Allow: /
+
+Sitemap: https://skill-bridge-rose-chi.vercel.app/sitemap.xml
